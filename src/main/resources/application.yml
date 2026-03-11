@@ -1,0 +1,175 @@
+# 代理服务器监听配置
+server:
+  host: 0.0.0.0        # 监听地址，0.0.0.0 表示监听所有网卡
+  port: 18443           # 监听端口，客户端连接这个端口
+
+# 目标后端服务器配置
+target:
+  host: httpbin.org    # 后端服务器地址（httpbin.org 是一个测试 HTTP 服务）
+  port: 443            # 后端服务器端口
+  protocol: https      # 后端协议: http 或 https
+
+# SSL/TLS 安全配置
+ssl:
+  # 密钥库配置（包含服务器的私钥和证书）
+  # 方式 1: 使用 JKS/PKCS12 密钥库文件（推荐，证书和私钥在同一个文件中）
+  keystore:
+    path: certificates/server/server.p12               # 密钥库文件路径
+    password: changeit                   # 开发默认密码（生产环境通过 KEYSTORE_PASSWORD 环境变量覆盖）
+    type: PKCS12                         # 密钥库类型: PKCS12 或 JKS
+
+  # 方式 2: 使用 PEM 格式（证书和私钥在不同文件中）
+  # keystore:
+  #   certFile: certs/server.crt         # 证书链文件路径（X.509 PEM 格式）
+  #   keyFile: certs/server.key          # 私钥文件路径（PKCS#8 PEM 格式）
+  #   password: ${KEYSTORE_PASSWORD}     # 私钥密码（如果私钥已加密）
+
+  # 信任库配置（包含受信任的客户端 CA 证书）
+  truststore:
+    path: certificates/trusted/truststore.p12           # 信任库文件路径
+    password: changeit                   # 开发默认密码（生产环境通过 TRUSTSTORE_PASSWORD 环境变量覆盖）
+    type: PKCS12                         # 信任库类型: PKCS12（推荐，跨平台标准）
+  # Backend trust strategy: SYSTEM | CUSTOM | BOTH
+  backendTrustStrategy: SYSTEM
+
+  # 客户端证书认证模式
+  # - NONE:     不需要客户端证书（纯服务端 SSL）
+  # - OPTIONAL: 客户端证书可选
+  # - REQUIRED: 必需客户端证书（双向 TLS/mTLS）
+  clientAuth: NONE
+
+  # 启用的 TLS 协议版本（按优先级排序）
+  protocols: [TLSv1.3, TLSv1.2]
+
+  # 可选：限制允许的加密套件（留空则使用 JVM 默认）
+  ciphers:
+    - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+    - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256
+
+  # 可选：证书指纹白名单（如果配置了白名单，则只允许白名单中的证书连接）
+  # 留空或注释掉表示不启用白名单，所有受信任的证书都可以连接
+  # whitelistFingerprints:
+  #   - "A1:B2:C3:D4:E5:F6:78:90:AB:CD:EF:12:34:56:78:90:AB:CD:EF:12:34:56:78:90:AB:CD:EF:12:34:56:78:90"
+  #   - "11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00"
+
+  # 可选：证书指纹黑名单（明确拒绝这些证书的连接）
+  # blacklistFingerprints:
+  #   - "AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88"
+
+  # 证书吊销检查配置（OCSP/CRL）
+  revocation:
+    # 是否启用证书吊销检查
+    enabled: false
+    # 是否启用 OCSP（在线证书状态协议）检查
+    ocspEnabled: true
+    # 是否启用 CRL（证书吊销列表）检查
+    crlEnabled: true
+    # OCSP 响应器 URL（可选，不配置则使用证书中的 AIA 扩展）
+    # ocspResponderUrl: http://ocsp.example.com
+    # OCSP 请求超时时间（毫秒）
+    ocspTimeout: 5000
+    # CRL 文件路径（可选，用于本地 CRL 文件）
+    # crlPath: /path/to/crl.pem
+    # CRL 分发点 URL（可选，不配置则使用证书中的 CDP 扩展）
+    # crlUrl: http://crl.example.com/crl.pem
+    # 如果吊销检查失败（如网络不可达），是否允许证书（软失败模式）
+    # 生产环境建议设为 false
+    softFail: false
+    # 是否缓存 OCSP/CRL 结果
+    cacheEnabled: true
+    # 缓存过期时间（秒）
+    cacheTtlSeconds: 3600
+
+# 后端连接配置
+connection:
+  timeout: 30000           # 连接/读取超时时间（毫秒）
+  keepalive: true          # 是否启用 Keep-Alive
+
+# 性能配置
+performance:
+  # TCP 连接队列大小（等待被 accept 的连接数）
+  # 建议值: 开发 128, 小型生产 512, 中型生产 1024, 高并发 4096
+  # 注意: 实际生效值 = min(backlog, 系统 net.core.somaxconn)
+  backlog: 1024
+
+  # Worker 线程数（处理 I/O 操作的线程）
+  # 0 表示使用默认值: CPU 核心数 * 2
+  workerThreads: 0
+
+  # 最大客户端连接数限制（前端连接数）
+  # 0 表示不限制，默认 10000
+  # 超过限制的新连接会被直接拒绝
+  maxClientConnections: 10000
+
+  # 后端连接池配置
+  backendPool:
+    # 是否启用连接池
+    enabled: true
+    # 每个后端的最大连接数
+    maxConnections: 100
+    # 获取连接超时时间（毫秒）
+    acquireTimeout: 5000
+    # 连接最大空闲时间（毫秒），超过则关闭
+    maxIdleTime: 60000
+
+# 管理端点配置
+management:
+  # 是否启用管理端点
+  enabled: true
+  # 管理服务器监听地址
+  # 安全建议：默认仅监听本机，如需对外暴露请配合鉴权与网络访问控制
+  host: 127.0.0.1
+  # 管理服务器监听端口
+  port: 9090
+  # 是否启用管理鉴权（默认仅保护 /admin/*）
+  authEnabled: true
+  # 管理鉴权 Token 建议通过环境变量 MANAGEMENT_TOKEN 注入（不要写入配置文件）
+  authToken: ""
+
+# 指标收集配置
+metrics:
+  # 是否启用指标收集
+  enabled: true
+  # 是否包含 JVM 指标
+  includeJvmMetrics: true
+  # 直方图桶边界（毫秒）
+  histogramBuckets: [5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000]
+
+# 限流配置
+rateLimit:
+  # 是否启用限流
+  enabled: false
+  # 全局每秒请求数限制
+  globalRps: 5000
+  # 全局突发容量
+  globalBurstCapacity: 500
+  # 每客户端每秒请求数限制
+  clientRps: 200
+  # 每客户端突发容量
+  clientBurstCapacity: 50
+
+# 熔断器配置
+circuitBreaker:
+  # 是否启用熔断器
+  enabled: false
+  # 触发熔断的失败率阈值（百分比），默认 50%
+  failureRateThreshold: 50
+  # 滑动窗口大小（请求数），用于计算失败率
+  slidingWindowSize: 100
+  # 最小请求数量，低于此值不触发熔断
+  minimumNumberOfCalls: 10
+  # 熔断器打开后等待的时间（秒），之后进入半开状态
+  waitDurationInOpenState: 60
+  # 半开状态允许的测试请求数
+  permittedNumberOfCallsInHalfOpenState: 10
+  # 慢调用阈值（毫秒），超过此时间被认为慢调用
+  slowCallDurationThreshold: 5000
+  # 慢调用率阈值（百分比），超过此值触发熔断
+  slowCallRateThreshold: 100
+
+# 优雅关闭配置
+shutdown:
+  # 优雅关闭超时时间（秒）
+  timeoutSeconds: 60
+  # 是否等待现有请求完成
+  awaitRequests: true
