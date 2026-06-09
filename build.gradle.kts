@@ -1,7 +1,6 @@
 plugins {
     id("java")
     id("application")
-    id("me.champeau.jmh") version "0.7.2"
 }
 
 group = "com.chaosguide"
@@ -13,6 +12,10 @@ java {
 }
 
 repositories {
+    maven {
+        name = "AliyunMavenPublic"
+        url = uri("https://maven.aliyun.com/repository/public")
+    }
     mavenCentral()
 }
 
@@ -70,17 +73,48 @@ dependencies {
     // Awaitility - 异步测试工具
     testImplementation("org.awaitility:awaitility:4.2.0")
 
+}
+
+sourceSets {
+    create("jmh") {
+        java.srcDir("src/jmh/java")
+        compileClasspath += sourceSets["main"].output + configurations["runtimeClasspath"]
+        runtimeClasspath += output + compileClasspath
+    }
+}
+
+dependencies {
     // JMH - 微基准测试
-    jmh("org.openjdk.jmh:jmh-core:1.37")
-    jmh("org.openjdk.jmh:jmh-generator-annprocess:1.37")
+    add("jmhImplementation", "org.openjdk.jmh:jmh-core:1.37")
+    add("jmhAnnotationProcessor", "org.openjdk.jmh:jmh-generator-annprocess:1.37")
 }
 
 application {
     mainClass.set("com.sslproxy.ProxyApplication")
 }
 
+tasks.register<JavaExec>("runCli") {
+    group = "application"
+    description = "Run the JSSLProxy admin CLI"
+    mainClass.set("com.sslproxy.cli.AdminCli")
+    classpath = sourceSets["main"].runtimeClasspath
+}
+
 tasks.test {
     useJUnitPlatform()
+}
+
+tasks.withType<JavaCompile>().configureEach {
+    options.encoding = "UTF-8"
+}
+
+tasks.register("resolveRuntimeClasspath") {
+    group = "build setup"
+    description = "Resolve runtime dependencies for Docker build cache warm-up."
+
+    doLast {
+        configurations.runtimeClasspath.get().resolve()
+    }
 }
 
 tasks.jar {
@@ -94,14 +128,26 @@ tasks.jar {
 
     // 创建 fat JAR (包含所有依赖)
     from(configurations.runtimeClasspath.get().map { if (it.isDirectory) it else zipTree(it) })
+    exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA")
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
 }
 
-// JMH 基准测试配置
-jmh {
-    warmupIterations.set(2)
-    iterations.set(3)
-    fork.set(1)
-    resultFormat.set("JSON")
-    resultsFile.set(project.file("build/reports/jmh/results.json"))
+tasks.register<JavaExec>("jmh") {
+    group = "verification"
+    description = "Run JMH benchmarks"
+    dependsOn("jmhClasses")
+    mainClass.set("org.openjdk.jmh.Main")
+    classpath = sourceSets["jmh"].runtimeClasspath
+
+    val resultsFile = layout.buildDirectory.file("reports/jmh/results.json")
+    args(
+        "-wi", "2",
+        "-i", "3",
+        "-f", "1",
+        "-rf", "json",
+        "-rff", resultsFile.get().asFile.absolutePath
+    )
+    doFirst {
+        resultsFile.get().asFile.parentFile.mkdirs()
+    }
 }

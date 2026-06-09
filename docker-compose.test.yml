@@ -1,0 +1,66 @@
+services:
+  test-runner:
+    image: gradle:8.14-jdk17
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+      - gradle-user-home:/home/gradle/.gradle
+      - gradle-project-cache:/workspace/.gradle
+    environment:
+      KEYSTORE_PASSWORD: changeit
+      TRUSTSTORE_PASSWORD: changeit
+      MANAGEMENT_TOKEN: smoke-token
+      BACKEND_HOST: backend
+      BACKEND_PORT: "80"
+      PROXY_PORT: "18443"
+      MANAGEMENT_PORT: "19090"
+    depends_on:
+      - backend
+    networks:
+      - test-network
+
+  backend:
+    image: nginx:alpine
+    networks:
+      - test-network
+    expose:
+      - "80"
+
+  proxy:
+    image: gradle:8.14-jdk17
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+      - gradle-user-home:/home/gradle/.gradle
+      - gradle-project-cache:/workspace/.gradle
+    environment:
+      KEYSTORE_PASSWORD: changeit
+      TRUSTSTORE_PASSWORD: changeit
+      MANAGEMENT_TOKEN: smoke-token
+      BACKEND_HOST: backend
+      BACKEND_PORT: "80"
+      PROXY_PORT: "18443"
+      MANAGEMENT_PORT: "19090"
+    command: gradle --no-daemon run --args=build/smoke-test/application-smoke.yml
+    depends_on:
+      - backend
+    networks:
+      - test-network
+
+  k6:
+    image: grafana/k6:0.54.0
+    profiles:
+      - perf
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+    networks:
+      - test-network
+
+networks:
+  test-network:
+    driver: bridge
+
+volumes:
+  gradle-user-home:
+  gradle-project-cache:

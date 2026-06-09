@@ -35,7 +35,7 @@ import java.util.Map;
  * 处理以下端点：
  * - /health - 基本健康检查
  * - /ready  - 就绪检查
- * - /info   - 服务器信息
+ * - /admin/info - 服务器信息
  * </p>
  *
  * @author SSL Proxy Team

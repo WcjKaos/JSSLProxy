@@ -8,6 +8,7 @@ import io.netty.channel.IoHandlerFactory;
 import io.netty.channel.MultiThreadIoEventLoopGroup;
 import io.netty.channel.ServerChannel;
 import io.netty.channel.nio.NioIoHandler;
+import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioServerSocketChannel;
 import io.netty.channel.socket.nio.NioSocketChannel;
 
@@ -120,6 +121,13 @@ public class TransportFactory {
     public static EventLoopGroup createEventLoopGroup(int nThreads) {
         if (!initialized) {
             initialize();
+        }
+
+        if (selectedTransport == TransportType.NIO) {
+            if (nThreads > 0) {
+                return new NioEventLoopGroup(nThreads);
+            }
+            return new NioEventLoopGroup();
         }
 
         IoHandlerFactory ioHandlerFactory = getIoHandlerFactory();

@@ -34,6 +34,8 @@ import com.sslproxy.server.ProxyServer;
 
 import io.netty.util.ResourceLeakDetector;
 
+import static org.awaitility.Awaitility.await;
+
 /**
  * 集成测试基类
  *
@@ -141,18 +143,10 @@ public abstract class IntegrationTestBase {
      * 等待代理服务器启动
      */
     protected void waitForServerStart() throws Exception {
-        int maxRetries = 50;
-        int retryInterval = 100;
-
-        for (int i = 0; i < maxRetries; i++) {
-            try (java.net.Socket socket = new java.net.Socket()) {
-                socket.connect(new java.net.InetSocketAddress("localhost", proxyPort), 100);
-                return; // 连接成功，服务器已启动
-            } catch (IOException e) {
-                Thread.sleep(retryInterval);
-            }
-        }
-        throw new RuntimeException("Proxy server failed to start within timeout");
+        await()
+                .atMost(15, TimeUnit.SECONDS)
+                .pollInterval(100, TimeUnit.MILLISECONDS)
+                .until(() -> proxyServer != null && proxyServer.isRunning());
     }
 
     /**

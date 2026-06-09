@@ -21,6 +21,7 @@ import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.HttpHeaderValues;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import io.netty.handler.codec.http.HttpVersion;
+import io.netty.handler.codec.http.QueryStringDecoder;
 import io.netty.util.ReferenceCountUtil;
 
 /**
@@ -35,6 +36,7 @@ public class ManagementAuthHandler extends ChannelInboundHandlerAdapter {
 
     private static final String BEARER_PREFIX = "Bearer ";
     private static final String ADMIN_PREFIX = "/admin/";
+    private static final String ADMIN_UI = "/admin/ui";
 
     private final ProxyConfig config;
     private final AuditLogger auditLogger;
@@ -52,7 +54,12 @@ public class ManagementAuthHandler extends ChannelInboundHandlerAdapter {
         }
 
         String uri = request.uri();
-        if (uri == null || !uri.startsWith(ADMIN_PREFIX)) {
+        String path = uri != null ? new QueryStringDecoder(uri).path() : null;
+        if (path == null || !path.startsWith(ADMIN_PREFIX)) {
+            ctx.fireChannelRead(msg);
+            return;
+        }
+        if (isAdminUiPath(path)) {
             ctx.fireChannelRead(msg);
             return;
         }
@@ -74,14 +81,18 @@ public class ManagementAuthHandler extends ChannelInboundHandlerAdapter {
         String providedToken = extractToken(request);
         if (providedToken == null || !constantTimeEquals(configuredToken, providedToken)) {
             String sourceIp = ctx.channel().remoteAddress().toString();
-            logger.warn("Unauthorized admin API access from {}: {}", sourceIp, uri);
-            auditUnauthorized(sourceIp, uri);
+            logger.warn("Unauthorized admin API access from {}: {}", sourceIp, path);
+            auditUnauthorized(sourceIp, path);
             reject(ctx, HttpResponseStatus.UNAUTHORIZED, "Unauthorized");
             ReferenceCountUtil.release(msg);
             return;
         }
 
         ctx.fireChannelRead(msg);
+    }
+
+    private static boolean isAdminUiPath(String path) {
+        return ADMIN_UI.equals(path) || path.startsWith(ADMIN_UI + "/");
     }
 
     private String extractToken(FullHttpRequest request) {
@@ -123,4 +134,3 @@ public class ManagementAuthHandler extends ChannelInboundHandlerAdapter {
         ctx.writeAndFlush(response).addListener(ChannelFutureListener.CLOSE);
     }
 }
-

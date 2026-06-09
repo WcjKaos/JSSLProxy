@@ -1,8 +1,11 @@
 package com.sslproxy;
 
+import java.util.Arrays;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.sslproxy.cli.AdminCli;
 import com.sslproxy.config.ProxyConfig;
 import com.sslproxy.server.ProxyServer;
 
@@ -29,9 +32,13 @@ public class ProxyApplication {
         }
     }
 
-    private static final Logger logger = LoggerFactory.getLogger(ProxyApplication.class);
-
     public static void main(String[] args) {
+        if (args.length > 0 && ("ctl".equals(args[0]) || "admin".equals(args[0]))) {
+            int exitCode = AdminCli.execute(Arrays.copyOfRange(args, 1, args.length),
+                    System.out, System.err, System.getenv());
+            System.exit(exitCode);
+        }
+
         try {
             // 处理帮助参数
             if (args.length > 0 && ("--help".equals(args[0]) || "-h".equals(args[0]))) {
@@ -39,6 +46,7 @@ public class ProxyApplication {
                 System.exit(0);
             }
 
+            Logger logger = LoggerFactory.getLogger(ProxyApplication.class);
             logger.info("========================================");
             logger.info("    Java SSL Proxy v1.0");
             logger.info("========================================");
@@ -54,6 +62,7 @@ public class ProxyApplication {
             server.start();
 
         } catch (Exception e) {
+            Logger logger = LoggerFactory.getLogger(ProxyApplication.class);
             logger.error("Failed to start proxy server: {}", e.getMessage(), e);
             System.exit(1);
         }
@@ -63,6 +72,7 @@ public class ProxyApplication {
         System.out.println("JSSLProxy - Java SSL/TLS Termination Proxy");
         System.out.println();
         System.out.println("Usage: java -jar jsslproxy.jar [options] [config-path]");
+        System.out.println("       java -jar jsslproxy.jar ctl [admin-cli-options] <command>");
         System.out.println();
         System.out.println("Options:");
         System.out.println("  -h, --help    Show this help message");

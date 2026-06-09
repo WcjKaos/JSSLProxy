@@ -1,12 +1,20 @@
 package com.sslproxy.management.handler;
 
+import com.sslproxy.audit.AuditEventType;
+import com.sslproxy.audit.AuditLogger;
 import com.sslproxy.config.ProxyConfig;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.embedded.EmbeddedChannel;
 import io.netty.handler.codec.http.*;
 import org.junit.jupiter.api.Test;
 
+import java.util.Map;
+
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
 
 /**
  * ManagementAuthHandler 单元测试
@@ -16,7 +24,8 @@ class ManagementAuthHandlerTest {
     @Test
     void testAdminEndpointWithoutToken_Returns401() {
         ProxyConfig config = createConfig(true, "secret-token");
-        EmbeddedChannel channel = new EmbeddedChannel(new ManagementAuthHandler(config, new com.sslproxy.audit.AuditLogger()));
+        AuditLogger auditLogger = mock(AuditLogger.class);
+        EmbeddedChannel channel = new EmbeddedChannel(new ManagementAuthHandler(config, auditLogger));
 
         FullHttpRequest request = new DefaultFullHttpRequest(
                 HttpVersion.HTTP_1_1, HttpMethod.GET, "/admin/whitelist");
@@ -25,6 +34,10 @@ class ManagementAuthHandlerTest {
         FullHttpResponse response = channel.readOutbound();
         assertNotNull(response);
         assertEquals(HttpResponseStatus.UNAUTHORIZED, response.status());
+        verify(auditLogger).log(eq(AuditEventType.ADMIN_UNAUTHORIZED), argThat((Map<String, Object> details) ->
+                "FAILURE".equals(details.get("result"))
+                        && "/admin/whitelist".equals(details.get("uri"))
+                        && details.containsKey("sourceIp")));
         response.release();
     }
 
@@ -110,6 +123,40 @@ class ManagementAuthHandlerTest {
         assertNull(response);
         FullHttpRequest forwarded = channel.readInbound();
         assertNotNull(forwarded);
+        forwarded.release();
+    }
+
+    @Test
+    void testAdminUiShell_NoAuthRequired() {
+        ProxyConfig config = createConfig(true, "secret-token");
+        EmbeddedChannel channel = new EmbeddedChannel(new ManagementAuthHandler(config, new com.sslproxy.audit.AuditLogger()));
+
+        FullHttpRequest request = new DefaultFullHttpRequest(
+                HttpVersion.HTTP_1_1, HttpMethod.GET, "/admin/ui");
+        channel.writeInbound(request);
+
+        FullHttpResponse response = channel.readOutbound();
+        assertNull(response);
+        FullHttpRequest forwarded = channel.readInbound();
+        assertNotNull(forwarded);
+        assertEquals("/admin/ui", forwarded.uri());
+        forwarded.release();
+    }
+
+    @Test
+    void testAdminUiStaticResource_NoAuthRequired() {
+        ProxyConfig config = createConfig(true, "secret-token");
+        EmbeddedChannel channel = new EmbeddedChannel(new ManagementAuthHandler(config, new com.sslproxy.audit.AuditLogger()));
+
+        FullHttpRequest request = new DefaultFullHttpRequest(
+                HttpVersion.HTTP_1_1, HttpMethod.GET, "/admin/ui/app.js");
+        channel.writeInbound(request);
+
+        FullHttpResponse response = channel.readOutbound();
+        assertNull(response);
+        FullHttpRequest forwarded = channel.readInbound();
+        assertNotNull(forwarded);
+        assertEquals("/admin/ui/app.js", forwarded.uri());
         forwarded.release();
     }
 

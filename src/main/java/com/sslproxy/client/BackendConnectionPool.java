@@ -11,6 +11,7 @@ import com.sslproxy.config.SSLContextFactory;
 import com.sslproxy.handler.ProxyBackendHandler;
 import com.sslproxy.loadbalance.LoadBalancer.Backend;
 import com.sslproxy.metrics.ProxyMetrics;
+import com.sslproxy.server.TransportFactory;
 import com.sslproxy.util.TlsUtil;
 
 import io.netty.bootstrap.Bootstrap;
@@ -24,7 +25,6 @@ import io.netty.channel.pool.ChannelHealthChecker;
 import io.netty.channel.pool.ChannelPool;
 import io.netty.channel.pool.ChannelPoolMap;
 import io.netty.channel.pool.FixedChannelPool;
-import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.handler.codec.http.HttpClientCodec;
 import io.netty.handler.codec.http.HttpObjectAggregator;
 import io.netty.handler.ssl.SslContext;
@@ -105,7 +105,7 @@ public class BackendConnectionPool {
 
         Bootstrap bootstrap = new Bootstrap()
                 .group(workerGroup)
-                .channel(NioSocketChannel.class)
+                .channel(TransportFactory.getSocketChannelClass())
                 .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, timeout)
                 .option(ChannelOption.SO_KEEPALIVE, keepalive)
                 .option(ChannelOption.TCP_NODELAY, true)

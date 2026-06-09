@@ -2,30 +2,25 @@
 # 多阶段构建：构建阶段 + 运行阶段
 
 # ============= 构建阶段 =============
-FROM eclipse-temurin:21-jdk AS builder
+FROM gradle:8.14-jdk17 AS builder
 
 WORKDIR /app
 
-# 复制 Gradle Wrapper 和构建文件
-COPY gradlew .
-COPY gradle gradle
+# 复制构建文件并使用镜像内置 Gradle，避免构建时下载 wrapper 分发包
 COPY build.gradle.kts .
 COPY settings.gradle.kts .
 
-# 授予执行权限
-RUN chmod +x gradlew
-
-# 下载依赖（利用 Docker 缓存层）
-RUN ./gradlew dependencies --no-daemon
+# 下载运行依赖（利用 Docker 缓存层，并在解析失败时直接失败）
+RUN gradle resolveRuntimeClasspath --no-daemon
 
 # 复制源代码
 COPY src src
 
 # 构建 JAR（跳过测试，生产构建）
-RUN ./gradlew jar --no-daemon
+RUN gradle jar --no-daemon
 
 # ============= 运行阶段 =============
-FROM eclipse-temurin:21-jre-alpine
+FROM eclipse-temurin:17-jre-alpine
 
 LABEL maintainer="SSL Proxy Team"
 LABEL version="1.0"
@@ -37,7 +32,7 @@ RUN addgroup -S sslproxy && adduser -S sslproxy -G sslproxy
 WORKDIR /app
 
 # 从构建阶段复制 JAR
-COPY --from=builder /app/build/libs/*-all.jar app.jar
+COPY --from=builder /app/build/libs/JSSLProxy-1.0-SNAPSHOT.jar app.jar
 
 # 创建配置和证书目录
 RUN mkdir -p /app/config /app/certs && \
@@ -50,8 +45,8 @@ RUN mkdir -p /app/config /app/certs && \
 USER sslproxy
 
 # 暴露端口
-# 代理端口（SSL）
-EXPOSE 8443
+# 代理端口（SSL）。默认配置中的 server.port 为 18443。
+EXPOSE 18443
 # 管理端口（HTTP）
 EXPOSE 9090
 
@@ -72,5 +67,5 @@ ENV JVM_MEMORY_OPTS="-Xms256m -Xmx512m"
 # 配置文件路径（可通过环境变量覆盖）
 ENV CONFIG_PATH="/app/config/application.yml"
 
-# 启动命令
-ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS $JVM_MEMORY_OPTS -jar app.jar $CONFIG_PATH"]
+# 启动命令。默认运行代理；传入参数时可直接执行 CLI，例如：docker run image ctl --help
+ENTRYPOINT ["sh", "-c", "if [ \"$#\" -eq 0 ]; then set -- \"$CONFIG_PATH\"; fi; exec java $JAVA_OPTS $JVM_MEMORY_OPTS -jar app.jar \"$@\"", "jsslproxy"]

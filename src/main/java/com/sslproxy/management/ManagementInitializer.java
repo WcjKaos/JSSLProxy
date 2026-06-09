@@ -7,6 +7,7 @@ import com.sslproxy.client.BackendConnectionPool;
 import com.sslproxy.config.ConfigWatcher;
 import com.sslproxy.config.ProxyConfig;
 import com.sslproxy.management.handler.AdminApiHandler;
+import com.sslproxy.management.handler.AdminUiHandler;
 import com.sslproxy.management.handler.HealthHandler;
 import com.sslproxy.management.handler.ManagementAuthHandler;
 import com.sslproxy.management.handler.MetricsHandler;
@@ -55,6 +56,9 @@ public class ManagementInitializer extends ChannelInitializer<SocketChannel> {
 
         // 管理鉴权处理器（默认仅保护 /admin/*）
         pipeline.addLast("auth", new ManagementAuthHandler(config, ctx.auditLogger()));
+
+        // 静态管理 UI。UI 壳页面不包含运行时数据，数据请求仍由 /admin/* API 鉴权保护。
+        pipeline.addLast("admin-ui", new AdminUiHandler());
 
         // 健康检查处理器
         pipeline.addLast("health", new HealthHandler(config, connectionPool,

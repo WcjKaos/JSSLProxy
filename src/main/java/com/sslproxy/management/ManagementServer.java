@@ -82,6 +82,7 @@ public class ManagementServer {
             logger.info("  /health  - Health check endpoint");
             logger.info("  /ready   - Readiness check endpoint");
             logger.info("  /metrics - Prometheus metrics endpoint");
+            logger.info("  /admin/ui - Admin UI shell");
             logger.info("  /admin/* - Admin API endpoints");
 
         } catch (Exception e) {

@@ -117,7 +117,7 @@ public class AdminApiHandler extends SimpleChannelInboundHandler<FullHttpRequest
             }
         } catch (Exception e) {
             logger.error("Error handling admin request: {}", e.getMessage(), e);
-            sendError(ctx, "Internal server error: " + e.getMessage());
+            sendError(ctx, "Internal server error");
         }
     }
 
@@ -285,7 +285,8 @@ public class AdminApiHandler extends SimpleChannelInboundHandler<FullHttpRequest
                     response.put("certs", "reloaded");
                 } catch (Exception e) {
                     logger.error("Failed to reload SSL context via API: {}", e.getMessage(), e);
-                    response.put("certs", "failed: " + e.getMessage());
+                    response.put("certs", "failed");
+                    response.put("error", "Certificate reload failed");
                     success = false;
                 }
             } else {

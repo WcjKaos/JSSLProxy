@@ -109,13 +109,22 @@ public class TestCertificates {
     public Path generateTrustStore() throws Exception {
         Path truststorePath = tempDir.resolve("truststore.p12");
         Path serverKeystorePath = tempDir.resolve("server-localhost.p12");
-        Path certPath = tempDir.resolve("server.cer");
+        Path clientKeystorePath = tempDir.resolve("client-test-client.p12");
 
-        // 导出服务器证书
+        exportAndImportCertificate(serverKeystorePath, "server", truststorePath, "server");
+        exportAndImportCertificate(clientKeystorePath, "client", truststorePath, "client");
+
+        return truststorePath;
+    }
+
+    private void exportAndImportCertificate(Path sourceKeystorePath, String sourceAlias,
+                                            Path truststorePath, String trustAlias) throws Exception {
+        Path certPath = tempDir.resolve(trustAlias + ".cer");
+
         ProcessBuilder exportPb = new ProcessBuilder(
                 "keytool", "-exportcert",
-                "-alias", "server",
-                "-keystore", serverKeystorePath.toString(),
+                "-alias", sourceAlias,
+                "-keystore", sourceKeystorePath.toString(),
                 "-storetype", "PKCS12",
                 "-storepass", new String(DEFAULT_PASSWORD),
                 "-file", certPath.toString(),
@@ -128,13 +137,12 @@ public class TestCertificates {
         }
         boolean exportCompleted = exportProcess.waitFor(30, TimeUnit.SECONDS);
         if (!exportCompleted || exportProcess.exitValue() != 0) {
-            throw new RuntimeException("Failed to export server certificate");
+            throw new RuntimeException("Failed to export " + trustAlias + " certificate");
         }
 
-        // 导入到信任库
         ProcessBuilder importPb = new ProcessBuilder(
                 "keytool", "-importcert",
-                "-alias", "server",
+                "-alias", trustAlias,
                 "-keystore", truststorePath.toString(),
                 "-storetype", "PKCS12",
                 "-storepass", new String(DEFAULT_PASSWORD),
@@ -148,10 +156,8 @@ public class TestCertificates {
         }
         boolean importCompleted = importProcess.waitFor(30, TimeUnit.SECONDS);
         if (!importCompleted || importProcess.exitValue() != 0) {
-            throw new RuntimeException("Failed to import certificate to truststore");
+            throw new RuntimeException("Failed to import " + trustAlias + " certificate to truststore");
         }
-
-        return truststorePath;
     }
 
     /**

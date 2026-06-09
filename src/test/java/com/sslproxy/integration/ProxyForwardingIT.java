@@ -1,6 +1,11 @@
 package com.sslproxy.integration;
 
 import static org.assertj.core.api.Assertions.*;
+import static org.awaitility.Awaitility.await;
+
+import java.net.InetSocketAddress;
+import java.net.Socket;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -102,5 +107,30 @@ class ProxyForwardingIT extends IntegrationTestBase {
         backendServer.resetConfig();
         HttpResponse normalResponse = sendGetRequest("/normal");
         assertThat(normalResponse.statusCode).isEqualTo(200);
+    }
+
+    @Test
+    @DisplayName("后端不可达时应返回 502 且不记录成功请求")
+    void testBackendUnavailableReturnsBadGateway() throws Exception {
+        backendServer.stop();
+        await()
+                .atMost(5, TimeUnit.SECONDS)
+                .pollInterval(100, TimeUnit.MILLISECONDS)
+                .until(() -> !canConnectToBackend());
+
+        HttpResponse response = sendGetRequest("/backend-down");
+
+        assertThat(response.statusCode).isEqualTo(502);
+        assertThat(response.body).contains("Bad Gateway");
+        assertThat(backendServer.getRequestCount()).isZero();
+    }
+
+    private boolean canConnectToBackend() {
+        try (Socket socket = new Socket()) {
+            socket.connect(new InetSocketAddress("localhost", backendPort), 100);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
     }
 }
