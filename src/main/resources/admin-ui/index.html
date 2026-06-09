@@ -9,11 +9,18 @@
 <body>
   <header class="topbar">
     <div>
-      <h1>JSSLProxy Admin</h1>
+      <h1 data-i18n="app.title">JSSLProxy Admin</h1>
       <p id="statusLine" class="status-line">Token required</p>
     </div>
-    <div class="toolbar" aria-label="Refresh controls">
-      <button id="refreshBtn" type="button">Refresh</button>
+    <div class="toolbar" aria-label="Refresh controls" data-i18n-aria-label="aria.refreshControls">
+      <label class="language-field">
+        <span data-i18n="label.language">Language</span>
+        <select id="languageSelect" class="language-select" aria-label="Language" data-i18n-aria-label="label.language">
+          <option value="en">English</option>
+          <option value="zh-CN">中文</option>
+        </select>
+      </label>
+      <button id="refreshBtn" type="button" data-i18n="action.refresh">Refresh</button>
       <button id="pauseBtn" type="button" class="secondary">Pause</button>
     </div>
   </header>
@@ -21,78 +28,87 @@
   <main>
     <section class="panel auth-panel" aria-labelledby="authTitle">
       <div>
-        <h2 id="authTitle">Connection</h2>
-        <p class="muted">Token is kept in this browser session only.</p>
+        <h2 id="authTitle" data-i18n="section.connection">Connection</h2>
+        <p class="muted" data-i18n="help.tokenSession">Token is kept in this browser session only.</p>
       </div>
       <div class="form-grid">
         <label>
-          Admin URL
-          <input id="baseUrlInput" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="same origin">
+          <span data-i18n="label.adminUrl">Admin URL</span>
+          <input id="baseUrlInput" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="same origin" data-i18n-placeholder="placeholder.sameOrigin">
         </label>
         <label>
-          Admin token
+          <span data-i18n="label.adminToken">Admin token</span>
           <input id="tokenInput" type="password" autocomplete="off" spellcheck="false">
         </label>
         <div class="button-row">
-          <button id="saveTokenBtn" type="button">Use token</button>
-          <button id="clearTokenBtn" type="button" class="secondary">Clear token</button>
+          <button id="saveTokenBtn" type="button" data-i18n="action.useToken">Use token</button>
+          <button id="clearTokenBtn" type="button" class="secondary" data-i18n="action.clearToken">Clear token</button>
         </div>
       </div>
+      <details class="usage-help">
+        <summary data-i18n="helpPanel.title">How to use this page</summary>
+        <ol class="usage-steps">
+          <li data-i18n="helpPanel.adminUrl">Admin URL is usually left as same origin. Only change it for local debugging against another localhost management endpoint.</li>
+          <li data-i18n="helpPanel.adminToken">Admin token is the value configured for the management API, normally MANAGEMENT_TOKEN or management.authToken.</li>
+          <li data-i18n="helpPanel.useToken">Enter the token and click Use token. The page stores it only in this browser session and then refreshes protected panels.</li>
+          <li data-i18n="helpPanel.clearToken">Click Clear token before sharing the machine or handing the browser to another operator.</li>
+        </ol>
+      </details>
     </section>
 
-    <section class="summary-grid" aria-label="Runtime summary">
+    <section class="summary-grid" aria-label="Runtime summary" data-i18n-aria-label="aria.runtimeSummary">
       <article class="panel metric-panel">
-        <span class="label">Health</span>
-        <strong id="healthValue">Unknown</strong>
-        <small id="healthDetail">Waiting</small>
+        <span class="label" data-i18n="label.health">Health</span>
+        <strong id="healthValue" data-i18n="state.unknown">Unknown</strong>
+        <small id="healthDetail" data-i18n="state.waiting">Waiting</small>
       </article>
       <article class="panel metric-panel">
-        <span class="label">Ready</span>
-        <strong id="readyValue">Unknown</strong>
-        <small id="readyDetail">Waiting</small>
+        <span class="label" data-i18n="label.ready">Ready</span>
+        <strong id="readyValue" data-i18n="state.unknown">Unknown</strong>
+        <small id="readyDetail" data-i18n="state.waiting">Waiting</small>
       </article>
       <article class="panel metric-panel">
-        <span class="label">Active connections</span>
+        <span class="label" data-i18n="label.activeConnections">Active connections</span>
         <strong id="connectionsValue">0</strong>
-        <small id="connectionsDetail">No data</small>
+        <small id="connectionsDetail" data-i18n="state.noData">No data</small>
       </article>
       <article class="panel metric-panel">
-        <span class="label">Config hash</span>
+        <span class="label" data-i18n="label.configHash">Config hash</span>
         <strong id="configHashValue">-</strong>
-        <small id="versionValue">Version unknown</small>
+        <small id="versionValue" data-i18n="state.versionUnknown">Version unknown</small>
       </article>
     </section>
 
     <section class="content-grid">
       <article class="panel" aria-labelledby="runtimeTitle">
         <div class="section-head">
-          <h2 id="runtimeTitle">Runtime</h2>
-          <span id="lastUpdated" class="muted">Never updated</span>
+          <h2 id="runtimeTitle" data-i18n="section.runtime">Runtime</h2>
+          <span id="lastUpdated" class="muted" data-i18n="state.neverUpdated">Never updated</span>
         </div>
         <dl id="runtimeList" class="kv-list"></dl>
       </article>
 
       <article class="panel" aria-labelledby="certTitle">
         <div class="section-head">
-          <h2 id="certTitle">Certificates</h2>
-          <button id="reloadCertsBtn" type="button" class="secondary">Reload certs</button>
+          <h2 id="certTitle" data-i18n="section.certificates">Certificates</h2>
+          <button id="reloadCertsBtn" type="button" class="secondary" data-i18n="action.reloadCerts">Reload certs</button>
         </div>
         <div id="certList" class="list"></div>
       </article>
 
       <article class="panel" aria-labelledby="metricsTitle">
         <div class="section-head">
-          <h2 id="metricsTitle">Metrics</h2>
-          <a href="/metrics" target="_blank" rel="noreferrer">Open raw</a>
+          <h2 id="metricsTitle" data-i18n="section.metrics">Metrics</h2>
+          <a href="/metrics" target="_blank" rel="noreferrer" data-i18n="action.openRaw">Open raw</a>
         </div>
         <dl id="metricsList" class="kv-list"></dl>
       </article>
 
       <article class="panel" aria-labelledby="rejectedTitle">
         <div class="section-head">
-          <h2 id="rejectedTitle">Rejected certificates</h2>
+          <h2 id="rejectedTitle" data-i18n="section.rejectedCertificates">Rejected certificates</h2>
           <label class="inline-field">
-            Limit
+            <span data-i18n="label.limit">Limit</span>
             <input id="rejectedLimitInput" type="number" min="1" max="500" value="50">
           </label>
         </div>
@@ -102,19 +118,19 @@
 
     <section class="lists-grid">
       <article class="panel" aria-labelledby="blacklistTitle">
-        <h2 id="blacklistTitle">Blacklist</h2>
+        <h2 id="blacklistTitle" data-i18n="section.blacklist">Blacklist</h2>
         <form id="blacklistForm" class="fingerprint-form">
-          <input id="blacklistInput" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="SHA-256 fingerprint">
-          <button type="submit">Add</button>
+          <input id="blacklistInput" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="SHA-256 fingerprint" data-i18n-placeholder="placeholder.fingerprint">
+          <button type="submit" data-i18n="action.add">Add</button>
         </form>
         <div id="blacklistItems" class="list compact"></div>
       </article>
 
       <article class="panel" aria-labelledby="whitelistTitle">
-        <h2 id="whitelistTitle">Whitelist</h2>
+        <h2 id="whitelistTitle" data-i18n="section.whitelist">Whitelist</h2>
         <form id="whitelistForm" class="fingerprint-form">
-          <input id="whitelistInput" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="SHA-256 fingerprint">
-          <button type="submit">Add</button>
+          <input id="whitelistInput" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="SHA-256 fingerprint" data-i18n-placeholder="placeholder.fingerprint">
+          <button type="submit" data-i18n="action.add">Add</button>
         </form>
         <div id="whitelistItems" class="list compact"></div>
       </article>
@@ -122,30 +138,30 @@
 
     <section class="panel danger-zone" aria-labelledby="dangerTitle">
       <div>
-        <h2 id="dangerTitle">Controlled operations</h2>
-        <p class="muted">These operations are audited by the management API.</p>
+        <h2 id="dangerTitle" data-i18n="section.controlledOperations">Controlled operations</h2>
+        <p class="muted" data-i18n="help.auditedOperations">These operations are audited by the management API.</p>
       </div>
       <div class="operations-grid">
         <label>
-          Reload target
+          <span data-i18n="label.reloadTarget">Reload target</span>
           <select id="reloadTargetSelect">
-            <option value="config">config</option>
-            <option value="certs">certs</option>
-            <option value="all">all</option>
+            <option value="config" data-i18n="target.config">config</option>
+            <option value="certs" data-i18n="target.certs">certs</option>
+            <option value="all" data-i18n="target.all">all</option>
           </select>
         </label>
-        <button id="reloadBtn" type="button" class="secondary">Reload target</button>
+        <button id="reloadBtn" type="button" class="secondary" data-i18n="action.reloadTarget">Reload target</button>
         <label>
-          Drain timeout
-          <input id="drainTimeoutInput" type="number" min="0" placeholder="seconds">
+          <span data-i18n="label.drainTimeout">Drain timeout</span>
+          <input id="drainTimeoutInput" type="number" min="0" placeholder="seconds" data-i18n-placeholder="placeholder.seconds">
         </label>
-        <button id="startDrainBtn" type="button" class="danger">Start drain</button>
-        <button id="cancelDrainBtn" type="button" class="secondary">Cancel drain</button>
+        <button id="startDrainBtn" type="button" class="danger" data-i18n="action.startDrain">Start drain</button>
+        <button id="cancelDrainBtn" type="button" class="secondary" data-i18n="action.cancelDrain">Cancel drain</button>
         <label class="wide">
-          Terminate by fingerprint
-          <input id="terminateInput" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="SHA-256 fingerprint">
+          <span data-i18n="label.terminateByFingerprint">Terminate by fingerprint</span>
+          <input id="terminateInput" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="SHA-256 fingerprint" data-i18n-placeholder="placeholder.fingerprint">
         </label>
-        <button id="terminateBtn" type="button" class="danger">Terminate connections</button>
+        <button id="terminateBtn" type="button" class="danger" data-i18n="action.terminateConnections">Terminate connections</button>
       </div>
     </section>
   </main>

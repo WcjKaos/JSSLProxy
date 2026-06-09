@@ -12,6 +12,8 @@ http://localhost:9090/admin/ui
 
 The shell page is intentionally allowed without a token so a browser can load it directly. It contains no runtime state or secrets. Every data request still calls the existing JSON APIs and must pass `Authorization: Bearer <token>`.
 
+The Connection panel includes a collapsible usage guide explaining what to enter for Admin URL and Admin token. In normal same-origin deployments, leave Admin URL empty and enter the configured management token.
+
 ## When To Use
 
 Use the UI for manual triage: checking readiness, certificate status, rejected certificates, metrics summaries, and the current whitelist/blacklist. It is also useful during incident response when an operator needs to reload certs, start drain, or remove a bad fingerprint with clear confirmation prompts.
@@ -25,6 +27,10 @@ Use curl or the CLI instead for repeatable scripts, SSH-only sessions, CI/CD gat
 - The token is never placed in a query string, HTML source, server-side session, or backend file.
 - If a protected API returns `401` or `403`, the UI stops retrying protected endpoints until the token is entered again.
 - Use **Clear token** before handing over a shared workstation.
+
+## Language
+
+Use the language selector in the top bar to switch between English and Simplified Chinese. The preference is kept in `sessionStorage`; it is not sent to the server and does not affect API requests or token handling.
 
 ## Available Panels
 
