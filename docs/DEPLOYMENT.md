@@ -148,3 +148,25 @@ readinessProbe:
 ```
 
 `/ready` 在 drain、后端全部不可用或 TLS 上下文异常时返回 `503`，适合作为流量摘除信号。
+
+未启用 `target.healthCheck` 时，每次 `/ready` 会并行探测后端 TCP 可达性，超时为 2 秒，并发请求共享在途探测。此探测不会修改负载均衡路由状态；至少一个后端可达才返回 `200`，部分可达时 `checks.backendTarget.status` 为 `PARTIAL`。
+
+需要验证后端 HTTP 服务和 HTTPS 证书时，启用周期健康检查：
+
+```yaml
+target:
+  host: backend.example.com
+  port: 443
+  protocol: https
+  healthCheck:
+    enabled: true
+    path: /health
+    intervalSeconds: 10
+    timeoutMs: 2000
+    unhealthyThreshold: 3
+    healthyThreshold: 2
+```
+
+启用后，`/ready` 使用周期检查结果，首个成功探测前返回 `503`。HTTPS 检查沿用 `ssl.backendTrustStrategy`、信任库和主机名验证，探测超时包含 DNS、连接、TLS 握手及 HTTP 响应。
+
+熔断器按完整后端响应结算：HTTP `5xx`、连接或写入失败、响应中断和超时计为失败；其他最终响应计为成功，响应状态及正文继续透传。`1xx` 临时响应不会提前结算，客户端主动取消不计为后端失败。慢调用耗时从请求获准转发开始，覆盖连接获取和完整响应等待。`connection.timeout` 同时限定单次完整后端响应的总等待时间，超时返回 `504`。

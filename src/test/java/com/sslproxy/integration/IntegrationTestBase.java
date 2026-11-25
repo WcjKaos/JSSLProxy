@@ -236,6 +236,7 @@ public abstract class IntegrationTestBase {
         return HttpClients.custom()
                 .setConnectionManager(connManager)
                 .setDefaultRequestConfig(requestConfig)
+                .disableAutomaticRetries()
                 .build();
     }
 

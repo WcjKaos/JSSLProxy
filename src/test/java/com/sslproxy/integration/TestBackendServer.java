@@ -4,8 +4,9 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.file.Path;
-import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -51,6 +52,8 @@ public class TestBackendServer implements Closeable {
     private volatile String responseBody = "OK";
     private volatile int responseDelayMs = 0;
     private volatile boolean shouldFail = false;
+    private volatile CompletableFuture<Void> responseGate;
+    private volatile int interimResponseStatus;
 
     /**
      * 创建 HTTP 后端服务器
@@ -173,6 +176,16 @@ public class TestBackendServer implements Closeable {
         return this;
     }
 
+    public TestBackendServer withResponseGate(CompletableFuture<Void> responseGate) {
+        this.responseGate = responseGate;
+        return this;
+    }
+
+    public TestBackendServer withInterimResponse(int status) {
+        this.interimResponseStatus = status;
+        return this;
+    }
+
     /**
      * 重置配置
      */
@@ -181,6 +194,8 @@ public class TestBackendServer implements Closeable {
         this.responseBody = "OK";
         this.responseDelayMs = 0;
         this.shouldFail = false;
+        this.responseGate = null;
+        this.interimResponseStatus = 0;
     }
 
     // ========== 统计方法 ==========
@@ -233,6 +248,7 @@ public class TestBackendServer implements Closeable {
     // ========== 内部 Handler ==========
 
     private class TestBackendHandler extends SimpleChannelInboundHandler<FullHttpRequest> {
+        private CompletableFuture<Void> responseTail = CompletableFuture.completedFuture(null);
 
         @Override
         protected void channelRead0(ChannelHandlerContext ctx, FullHttpRequest request) throws Exception {
@@ -247,9 +263,10 @@ public class TestBackendServer implements Closeable {
                 return;
             }
 
-            // 模拟延迟
-            if (responseDelayMs > 0) {
-                Thread.sleep(responseDelayMs);
+            if (interimResponseStatus > 0) {
+                ctx.writeAndFlush(new DefaultFullHttpResponse(
+                        HttpVersion.HTTP_1_1, HttpResponseStatus.valueOf(interimResponseStatus)
+                ));
             }
 
             // 构建响应
@@ -271,9 +288,52 @@ public class TestBackendServer implements Closeable {
                 response.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.KEEP_ALIVE);
             }
 
-            ctx.writeAndFlush(response).addListener(future -> {
-                if (!keepAlive) {
-                    ctx.close();
+            int delayMs = responseDelayMs;
+            CompletableFuture<Void> previousResponse = responseTail;
+            CompletableFuture<Void> responseSent = new CompletableFuture<>();
+            responseTail = responseSent;
+            AtomicBoolean pending = new AtomicBoolean(true);
+            ChannelFutureListener releaseOnClose = future -> {
+                if (pending.compareAndSet(true, false)) {
+                    response.release();
+                    responseSent.complete(null);
+                }
+            };
+            ctx.channel().closeFuture().addListener(releaseOnClose);
+            Runnable writeResponse = () -> {
+                if (!pending.compareAndSet(true, false)) {
+                    return;
+                }
+                ctx.channel().closeFuture().removeListener(releaseOnClose);
+                if (!ctx.channel().isActive()) {
+                    response.release();
+                    responseSent.complete(null);
+                    return;
+                }
+                ctx.writeAndFlush(response).addListener(future -> {
+                    if (!keepAlive) {
+                        ctx.close();
+                    }
+                    responseSent.complete(null);
+                });
+            };
+            Runnable scheduleResponse = () -> {
+                if (!pending.get()) {
+                    return;
+                }
+                if (delayMs > 0) {
+                    ctx.executor().schedule(writeResponse, delayMs, TimeUnit.MILLISECONDS);
+                } else {
+                    writeResponse.run();
+                }
+            };
+            CompletableFuture<Void> gate = responseGate;
+            CompletableFuture<Void> ready = gate == null
+                    ? previousResponse
+                    : previousResponse.thenCompose(ignored -> gate);
+            ready.whenComplete((ignored, failure) -> {
+                if (pending.get()) {
+                    ctx.executor().execute(scheduleResponse);
                 }
             });
         }

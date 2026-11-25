@@ -1,5 +1,8 @@
 package com.sslproxy.handler;
 
+import java.util.concurrent.RejectedExecutionException;
+import java.util.function.Consumer;
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -7,6 +10,9 @@ import io.netty.channel.Channel;
 import io.netty.channel.ChannelFutureListener;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
+import io.netty.handler.codec.http.HttpObject;
+import io.netty.handler.codec.http.HttpResponse;
+import io.netty.handler.codec.http.LastHttpContent;
 import io.netty.util.ReferenceCountUtil;
 
 /**
@@ -14,7 +20,7 @@ import io.netty.util.ReferenceCountUtil;
  * <p>
  * 处理从后端服务器接收的响应，并转发回客户端。
  * </p>
- * 
+ *
  * @author SSL Proxy Team
  * @version 1.0
  */
@@ -26,7 +32,7 @@ public class ProxyBackendHandler extends ChannelInboundHandlerAdapter {
 
     /**
      * 构造后端处理器
-     * 
+     *
      * @param inboundChannel 入站通道（客户端连接）
      */
     public ProxyBackendHandler(Channel inboundChannel) {
@@ -35,7 +41,7 @@ public class ProxyBackendHandler extends ChannelInboundHandlerAdapter {
 
     /**
      * Channel 激活时调用
-     * 
+     *
      * @param ctx Channel 上下文
      */
     @Override
@@ -50,12 +56,25 @@ public class ProxyBackendHandler extends ChannelInboundHandlerAdapter {
      * <p>
      * 接收从后端服务器返回的数据，并转发给客户端。
      * </p>
-     * 
+     *
      * @param ctx Channel 上下文
      * @param msg 消息对象
      */
     @Override
     public void channelRead(ChannelHandlerContext ctx, Object msg) {
+        if (msg instanceof HttpObject object) {
+            int status = msg instanceof HttpResponse response ? response.status().code() : 0;
+            boolean complete = msg instanceof LastHttpContent;
+            boolean failed = !object.decoderResult().isSuccess();
+            boolean dispatched = notifyFrontend(ctx.channel(), frontendContext ->
+                    ((ProxyFrontendHandler) frontendContext.handler()).backendResponse(
+                            frontendContext, ctx.channel(), status, complete, failed));
+            if (!dispatched || failed) {
+                ReferenceCountUtil.release(msg);
+                ctx.close();
+                return;
+            }
+        }
         // 转发后端响应到客户端
         if (inboundChannel.isActive()) {
             inboundChannel.writeAndFlush(msg).addListener((ChannelFutureListener) future -> {
@@ -85,7 +104,7 @@ public class ProxyBackendHandler extends ChannelInboundHandlerAdapter {
 
     /**
      * 读取完成
-     * 
+     *
      * @param ctx Channel 上下文
      */
     @Override
@@ -97,26 +116,26 @@ public class ProxyBackendHandler extends ChannelInboundHandlerAdapter {
 
     /**
      * Channel 不活跃时调用
-     * 
+     *
      * @param ctx Channel 上下文
      */
     @Override
     public void channelInactive(ChannelHandlerContext ctx) {
         logger.debug("Backend channel inactive: {}", ctx.channel().remoteAddress());
-        closeInboundChannel();
+        notifyBackendFailure(ctx.channel());
     }
 
     /**
      * 异常处理
-     * 
+     *
      * @param ctx Channel 上下文
      * @param cause 异常
      */
     @Override
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
         logger.error("Exception in proxy backend handler: {}", cause.getMessage(), cause);
+        notifyBackendFailure(ctx.channel());
         ctx.close();
-        closeInboundChannel();
     }
 
     /**
@@ -126,6 +145,26 @@ public class ProxyBackendHandler extends ChannelInboundHandlerAdapter {
         if (inboundChannel != null && inboundChannel.isActive()) {
             logger.debug("Closing inbound channel");
             inboundChannel.close();
+        }
+    }
+
+    private void notifyBackendFailure(Channel channel) {
+        notifyFrontend(channel, frontendContext ->
+                ((ProxyFrontendHandler) frontendContext.handler()).backendFailure(frontendContext, channel));
+    }
+
+    private boolean notifyFrontend(Channel channel, Consumer<ChannelHandlerContext> notification) {
+        try {
+            inboundChannel.eventLoop().execute(() -> {
+                ChannelHandlerContext frontendContext = inboundChannel.pipeline().context(ProxyFrontendHandler.class);
+                if (frontendContext != null) {
+                    notification.accept(frontendContext);
+                }
+            });
+            return true;
+        } catch (RejectedExecutionException rejected) {
+            channel.close();
+            return false;
         }
     }
 }

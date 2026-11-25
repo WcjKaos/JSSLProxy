@@ -3,12 +3,35 @@
 > Date: 2026-06-09
 > Scope: 1.3.0 quality and usability hardening, with no feature expansion.
 > Status: Initial P0 proxy regression and T-23 through T-30 are complete locally; remote GitHub Actions must still be checked after push.
+> Regression verification updated: 2026-11-25. The supplemental results below supersede the earlier readiness and circuit-breaker coverage claims.
 
 ## Executive Summary
 
 JSSLProxy is now passing the core Docker JDK 17 test and build gates after fixing the Netty transport mismatch that caused proxy integration tests to return `502 Bad Gateway`. T-23 through T-30 are complete locally: security audit, test matrix, Docker smoke test, performance baseline, documentation hardening, CI workflow, release checklist, and release readiness are in place. The project is usable as a focused lightweight mTLS gateway. Release remains conditional only on the first remote GitHub Actions run passing after push.
 
 No scope expansion is recommended. The current goal remains: make existing mTLS termination, HTTP/HTTPS forwarding, certificate admission control, revocation checks, metrics, and management operations stable, trustworthy, deployable, and easy to troubleshoot.
+
+## 2026-11-25 Regression Corrections
+
+Three runtime defects were reproduced and fixed:
+
+| Defect | Corrected behavior | Regression evidence |
+|--------|--------------------|---------------------|
+| Readiness used the initial healthy flag when periodic health checks were disabled | Parallel TCP probes with a 2-second deadline supply a fresh readiness snapshot; no reachable backends returns 503, partial availability returns 200 with `PARTIAL`. Routing health flags remain independent. | `ReadinessIT`, `BackendReadinessProbeIT`, `HealthHandlerReadyTest` |
+| HTTPS health checks sent plaintext HTTP and missed some terminal failures | Probes use the configured backend trust strategy, key material and hostname validation. TLS failures, invalid responses, early EOF and deadlines finish each probe once. | `HttpsHealthCheckIT`, `BackendReadinessProbeIT` |
+| Circuit-breaker calls completed when requests were written | Each admitted request completes only after its final backend response, using monotonic elapsed time. HTTP 5xx and transport failures count as failures; slow final responses affect the slow-call threshold. | `CircuitBreakerIT`, `CircuitBreakerDirectIT` |
+
+The circuit-breaker regressions also cover interim 103 responses, pipelined requests, OPEN/HALF_OPEN recovery, backend EOF, response deadlines returning 504, and client cancellation without counting a backend failure. Incomplete pooled connections close before release, and late callbacks cannot complete a request twice. The same integration suite runs with pooling enabled and disabled.
+
+Before the health implementation changed, all eight new `ReadinessIT` and `HttpsHealthCheckIT` scenarios failed. After the fixes, the focused suite passed 57 tests. The full Docker JDK 17 build passed 499 tests across 43 classes, with zero failures, errors or skipped tests.
+
+| Gate | Command | Result |
+|------|---------|--------|
+| Focused regressions | `docker compose -f docker-compose.test.yml run --rm --no-deps test-runner ./gradlew --no-daemon test --tests '*ReadinessIT' --tests '*HttpsHealthCheckIT' --tests '*BackendReadinessProbeIT' --tests '*HealthHandlerReadyTest' --tests '*CircuitBreakerIT' --tests '*CircuitBreakerDirectIT' --tests '*BackendCircuitBreakerTest'` | Passed: 57 tests |
+| Full tests and packaging | `docker compose -f docker-compose.test.yml run --rm --no-deps test-runner ./gradlew --no-daemon build` | Passed: 499 tests and artifact assembly |
+| Docker operational smoke | `docker compose -f docker-compose.test.yml run --rm test-runner bash ./scripts/smoke-test.sh` | Passed: mTLS forwarding/rejection, readiness, metrics, management auth, Admin UI shell and CLI operations |
+
+The results in the remaining sections are the historical June 2026 baseline. These local changes still require CI verification after they are pushed.
 
 ## Environment Baseline
 

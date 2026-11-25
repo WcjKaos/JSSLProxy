@@ -37,6 +37,24 @@ class BackendCircuitBreakerTest {
         return new BackendCircuitBreaker(config, null, ProxyMetrics.noop(), new AuditLogger());
     }
 
+    @Test
+    void should_releaseCancelledHalfOpenPermission_withoutRecordingAnOutcome() {
+        BackendCircuitBreaker breaker = createCircuitBreaker();
+        breaker.getResilience4jCircuitBreaker().transitionToOpenState();
+        breaker.getResilience4jCircuitBreaker().transitionToHalfOpenState();
+        for (int requestIndex = 0; requestIndex < config.permittedNumberOfCallsInHalfOpenState; requestIndex++) {
+            assertTrue(breaker.allowRequest());
+        }
+        assertFalse(breaker.allowRequest());
+
+        breaker.releasePermission();
+
+        assertTrue(breaker.allowRequest());
+        assertEquals(0, breaker.getStats().totalCalls);
+        assertEquals(0, breaker.getStats().successfulCalls);
+        assertEquals(0, breaker.getStats().failedCalls);
+    }
+
     // ========== 初始化测试 ==========
 
     @Test

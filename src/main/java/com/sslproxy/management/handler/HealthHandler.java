@@ -6,7 +6,6 @@ import com.sslproxy.client.BackendConnectionPool;
 import com.sslproxy.config.ProxyConfig;
 import com.sslproxy.config.SslContextHolder;
 import com.sslproxy.handler.MaxConnectionsHandler;
-import com.sslproxy.loadbalance.LoadBalancer.Backend;
 import com.sslproxy.loadbalance.LoadBalancerManager;
 import com.sslproxy.metrics.ProxyMetrics;
 
@@ -99,6 +98,25 @@ public class HealthHandler extends SimpleChannelInboundHandler<FullHttpRequest> 
      * - SSL 证书过期 → 503
      */
     private void handleReady(ChannelHandlerContext ctx) {
+        if (MaxConnectionsHandler.isDraining() || loadBalancerManager == null) {
+            sendReadinessResponse(ctx, Map.of());
+            return;
+        }
+        loadBalancerManager.checkReadiness().whenComplete((backends, failure) -> {
+            Runnable response = () -> {
+                if (ctx.channel().isActive()) {
+                    sendReadinessResponse(ctx, failure == null ? backends : Map.of());
+                }
+            };
+            if (ctx.executor().inEventLoop()) {
+                response.run();
+            } else {
+                ctx.executor().execute(response);
+            }
+        });
+    }
+
+    private void sendReadinessResponse(ChannelHandlerContext ctx, Map<String, Boolean> backends) {
         Map<String, Object> response = new HashMap<>();
         Map<String, Object> checks = new HashMap<>();
 
@@ -113,26 +131,21 @@ public class HealthHandler extends SimpleChannelInboundHandler<FullHttpRequest> 
             return;
         }
 
-        boolean ready = true;
+        boolean ready = false;
 
         // 后端健康检查（通过 LoadBalancerManager 获取实时状态）
         LoadBalancerManager lbManager = loadBalancerManager;
         if (lbManager != null) {
-            java.util.List<Backend> backends = lbManager.getLoadBalancer().getBackends();
-            long healthy = backends.stream().filter(Backend::isHealthy).count();
+            long healthy = backends.values().stream().filter(Boolean.TRUE::equals).count();
             long total = backends.size();
 
             Map<String, Object> backendStatus = new HashMap<>();
             backendStatus.put("healthy", healthy);
             backendStatus.put("total", total);
-            for (Backend b : backends) {
-                backendStatus.put(b.getKey(), b.isHealthy() ? "UP" : "DOWN");
-            }
+            backendStatus.put("status", healthy == 0 ? "DOWN" : healthy == total ? "UP" : "PARTIAL");
+            backends.forEach((key, available) -> backendStatus.put(key, available ? "UP" : "DOWN"));
             checks.put("backendTarget", backendStatus);
-
-            if (healthy == 0 && total > 0) {
-                ready = false;
-            }
+            ready = healthy > 0;
         } else {
             // 无 LoadBalancerManager 时显示配置信息
             Map<String, Object> backendInfo = new HashMap<>();

@@ -133,7 +133,7 @@ public final class ProxyContext {
         // 负载均衡器
         LoadBalancerManager loadBalancerManager = null;
         if (config.target != null) {
-            loadBalancerManager = new LoadBalancerManager(config.target, workerGroup);
+            loadBalancerManager = new LoadBalancerManager(config.target, workerGroup, config.ssl);
             logger.info("✓ Load balancer initialized: strategy={}, backends={}",
                     config.target.strategy,
                     loadBalancerManager.getLoadBalancer().getBackends().size());

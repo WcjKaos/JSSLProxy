@@ -68,6 +68,8 @@ curl.exe http://localhost:9090/metrics
 
 ## 常用 PromQL
 
+`proxy_circuitbreaker_calls_total{result="successful|failed|rejected"}` 在完整后端响应、失败或拒绝时更新。HTTP `5xx`、连接失败、响应中断和超时计入 `failed`；其他最终 HTTP 响应计入 `successful`。客户端取消不计入成功或失败，`1xx` 临时响应也不结算。慢调用根据请求获准至完整响应的总耗时判定，可通过 `resilience4j_circuitbreaker_slow_calls` 观察；请求写出成功不会提前增加成功计数。
+
 请求速率：
 
 ```promql

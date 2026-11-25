@@ -3,8 +3,13 @@ package com.sslproxy.management.handler;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import com.sslproxy.config.ProxyConfig;
+import com.sslproxy.config.SslContextHolder;
 import com.sslproxy.handler.MaxConnectionsHandler;
+import com.sslproxy.loadbalance.LoadBalancerManager;
+import com.sslproxy.metrics.ProxyMetrics;
+import com.sslproxy.server.TransportFactory;
 
+import io.netty.channel.EventLoopGroup;
 import io.netty.channel.embedded.EmbeddedChannel;
 import io.netty.handler.codec.http.*;
 
@@ -14,8 +19,11 @@ import org.junit.jupiter.api.Test;
 import java.lang.reflect.Type;
 import java.nio.charset.StandardCharsets;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 /**
  * Unit tests for the {@link HealthHandler} /ready endpoint.
@@ -92,8 +100,6 @@ class HealthHandlerReadyTest {
 
     @Test
     void should_return503WithDownStatus_when_notDrainingButSslContextHolderIsNull() {
-        // SslContextHolder.getInstance() returns null in test environment,
-        // which makes ready=false and status=DOWN.
         EmbeddedChannel channel = createChannel();
         FullHttpResponse response = sendReadyRequest(channel);
 
@@ -127,8 +133,6 @@ class HealthHandlerReadyTest {
 
     @Test
     void should_showBackendTargetAsUnknown_when_loadBalancerManagerNotInitialized() {
-        // LoadBalancerManager.getInstance() returns null in test environment,
-        // so the handler falls back to showing config-based backend info with UNKNOWN status.
         EmbeddedChannel channel = createChannel();
         FullHttpResponse response = sendReadyRequest(channel);
 
@@ -197,5 +201,48 @@ class HealthHandlerReadyTest {
 
         response.release();
         channel.finishAndReleaseAll();
+    }
+
+    @Test
+    void should_return503_when_noBackendsAreConfigured() {
+        assertUnverifiedBackendsAreNotReady(false);
+    }
+
+    @Test
+    void should_return503_when_firstPeriodicHealthCheckHasNotCompleted() {
+        assertUnverifiedBackendsAreNotReady(true);
+    }
+
+    private void assertUnverifiedBackendsAreNotReady(boolean pendingHealthCheck) {
+        ProxyConfig config = new ProxyConfig();
+        config.target = new ProxyConfig.Target();
+        config.target.host = "localhost";
+        config.target.port = 8080;
+        config.target.protocol = "http";
+        config.target.healthCheck = new ProxyConfig.HealthCheckConfig();
+        config.target.healthCheck.enabled = pendingHealthCheck;
+        EventLoopGroup eventLoops = TransportFactory.createEventLoopGroup(1);
+        LoadBalancerManager manager = new LoadBalancerManager(config.target, eventLoops);
+        SslContextHolder sslContext = mock(SslContextHolder.class);
+        when(sslContext.getCertificateStatus()).thenReturn("UP");
+        if (!pendingHealthCheck) {
+            manager.getLoadBalancer().removeBackend("localhost", 8080);
+        }
+        EmbeddedChannel channel = new EmbeddedChannel(
+                new HealthHandler(config, null, ProxyMetrics.noop(), manager, sslContext));
+        try {
+            FullHttpResponse response = sendReadyRequest(channel);
+            assertThat(response).isNotNull();
+            try {
+                assertThat(response.status()).isEqualTo(HttpResponseStatus.SERVICE_UNAVAILABLE);
+                assertThat(parseBody(response).get("status")).isEqualTo("DOWN");
+            } finally {
+                response.release();
+            }
+        } finally {
+            channel.finishAndReleaseAll();
+            manager.stop();
+            eventLoops.shutdownGracefully(0, 1, TimeUnit.SECONDS).syncUninterruptibly();
+        }
     }
 }

@@ -193,6 +193,12 @@ public class BackendCircuitBreaker {
         }
     }
 
+    public void releasePermission() {
+        if (config != null && config.enabled) {
+            circuitBreaker.releasePermission();
+        }
+    }
+
     /**
      * 记录成功的调用
      *

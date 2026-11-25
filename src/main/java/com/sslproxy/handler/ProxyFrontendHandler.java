@@ -5,6 +5,12 @@ import org.slf4j.LoggerFactory;
 
 import java.net.ConnectException;
 import java.net.UnknownHostException;
+import java.nio.channels.ClosedChannelException;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 import javax.net.ssl.SSLException;
 
@@ -37,6 +43,7 @@ import io.netty.handler.codec.http.HttpVersion;
 import io.netty.handler.timeout.IdleState;
 import io.netty.handler.timeout.IdleStateEvent;
 import io.netty.util.concurrent.Future;
+import io.netty.util.concurrent.ScheduledFuture;
 
 /**
  * 代理前端处理器
@@ -60,8 +67,10 @@ public class ProxyFrontendHandler extends SimpleChannelInboundHandler<HttpObject
     private final BackendCircuitBreaker circuitBreaker;
     private final LoadBalancerManager loadBalancerManager;
     private Backend currentBackend;
+    private final Deque<BackendCall> pendingCalls = new ArrayDeque<>();
+    private final Deque<BackendConnectionListener> connectionListeners = new ArrayDeque<>();
+    private boolean connecting;
 
-    private long requestStartTime;
     private String requestUri;
     private String clientAddress;
 
@@ -137,7 +146,6 @@ public class ProxyFrontendHandler extends SimpleChannelInboundHandler<HttpObject
      * @param request 完整的 HTTP 请求
      */
     private void handleFullHttpRequest(ChannelHandlerContext ctx, FullHttpRequest request) {
-        requestStartTime = System.currentTimeMillis();
         requestUri = request.uri();
 
         logger.debug("Received request: {} {} from {}", request.method(), requestUri, clientAddress);
@@ -147,6 +155,7 @@ public class ProxyFrontendHandler extends SimpleChannelInboundHandler<HttpObject
             sendServiceUnavailableResponse(ctx, "Service temporarily unavailable (circuit breaker open)");
             return;
         }
+        BackendCall call = beginBackendCall(ctx);
 
         // 建立到后端服务器的连接（异步）
         if (outboundChannel == null || !outboundChannel.isActive()) {
@@ -154,9 +163,9 @@ public class ProxyFrontendHandler extends SimpleChannelInboundHandler<HttpObject
             request.retain();
 
             establishBackendConnection(ctx,
-                    channel -> doForwardRequest(ctx, request),
+                    channel -> doForwardRequest(ctx, request, call),
                     cause -> {
-                        recordCircuitBreakerFailure();
+                        completeBackendCall(call, false);
                         request.release();
                         sendErrorResponse(ctx, "Failed to connect to backend: " +
                                 (cause != null ? cause.getMessage() : "Unknown error"));
@@ -164,7 +173,7 @@ public class ProxyFrontendHandler extends SimpleChannelInboundHandler<HttpObject
         } else {
             // 已有连接，直接转发（需要 retain）
             request.retain();
-            doForwardRequest(ctx, request);
+            doForwardRequest(ctx, request, call);
         }
     }
 
@@ -174,29 +183,29 @@ public class ProxyFrontendHandler extends SimpleChannelInboundHandler<HttpObject
      * 注意：调用此方法前必须已经 retain() 过 request
      * </p>
      */
-    private void doForwardRequest(ChannelHandlerContext ctx, FullHttpRequest request) {
+    private void doForwardRequest(ChannelHandlerContext ctx, FullHttpRequest request, BackendCall call) {
         if (outboundChannel != null && outboundChannel.isActive()) {
             // 修改请求头（如果需要）
             modifyRequestHeaders(request);
 
             // writeAndFlush 会消费 request 的引用计数
             outboundChannel.writeAndFlush(request).addListener((ChannelFutureListener) future -> {
-                if (future.isSuccess()) {
-                    long duration = System.currentTimeMillis() - requestStartTime;
-                    logger.debug("Request forwarded to backend: {} {} (took {}ms)", request.method(), requestUri, duration);
-                    recordCircuitBreakerSuccess(duration);
-                } else {
+                if (!future.isSuccess()) {
                     logger.error("Failed to forward request to backend: {}",
                             future.cause() != null ? future.cause().getMessage() : "unknown");
-                    recordCircuitBreakerFailure();
-                    // writeAndFlush 失败时 Netty 会自动释放 request
-                    // 关闭后端连接和前端连接
-                    closeBackendChannel();
-                    ctx.close();
+                    ctx.executor().execute(() -> {
+                        if (call.completed || future.channel() != outboundChannel) {
+                            return;
+                        }
+                        completeBackendCall(call, false);
+                        failPendingCalls();
+                        closeBackendChannel(true);
+                        ctx.close();
+                    });
                 }
             });
         } else {
-            recordCircuitBreakerFailure();
+            completeBackendCall(call, false);
             request.release(); // 没有可用连接，释放引用
             sendErrorResponse(ctx, "Backend connection not available");
         }
@@ -213,7 +222,6 @@ public class ProxyFrontendHandler extends SimpleChannelInboundHandler<HttpObject
      * @param request HTTP 请求
      */
     private void handleHttpRequest(ChannelHandlerContext ctx, HttpRequest request) {
-        requestStartTime = System.currentTimeMillis();
         requestUri = request.uri();
 
         logger.debug("Received streaming request: {} {} from {}", request.method(), requestUri, clientAddress);
@@ -223,18 +231,22 @@ public class ProxyFrontendHandler extends SimpleChannelInboundHandler<HttpObject
             sendServiceUnavailableResponse(ctx, "Service temporarily unavailable (circuit breaker open)");
             return;
         }
+        BackendCall call = beginBackendCall(ctx);
 
         // 建立到后端服务器的连接（异步）
         if (outboundChannel == null || !outboundChannel.isActive()) {
             // HttpRequest 不需要 retain()（它不是 ReferenceCounted）
 
             establishBackendConnection(ctx,
-                    channel -> forwardStreamingRequestToBackend(ctx, request),
-                    cause -> sendErrorResponse(ctx, "Failed to connect to backend: " +
-                            (cause != null ? cause.getMessage() : "Unknown error")));
+                    channel -> forwardStreamingRequestToBackend(ctx, request, call),
+                    cause -> {
+                        completeBackendCall(call, false);
+                        sendErrorResponse(ctx, "Failed to connect to backend: " +
+                                (cause != null ? cause.getMessage() : "Unknown error"));
+                    });
         } else {
             // 已有连接，直接转发
-            forwardStreamingRequestToBackend(ctx, request);
+            forwardStreamingRequestToBackend(ctx, request, call);
         }
     }
 
@@ -265,64 +277,94 @@ public class ProxyFrontendHandler extends SimpleChannelInboundHandler<HttpObject
      * @param onFailure 连接失败回调
      */
     private void establishBackendConnection(ChannelHandlerContext ctx,
-                                            java.util.function.Consumer<Channel> onSuccess,
-                                            java.util.function.Consumer<Throwable> onFailure) {
-        if (useConnectionPool) {
+                                            Consumer<Channel> onSuccess,
+                                            Consumer<Throwable> onFailure) {
+        connectionListeners.addLast(new BackendConnectionListener(onSuccess, onFailure));
+        if (connecting) {
+            return;
+        }
+        connecting = true;
+        try {
             BackendTarget target = resolveBackend();
-            currentBackend = target.backend;
-            Future<Channel> acquireFuture = connectionPool.acquire(
-                    ctx.channel(), target.host, target.port, target.protocol, target.backend);
-            acquireFuture.addListener(future -> {
-                if (future.isSuccess()) {
-                    outboundChannel = (Channel) future.getNow();
-                    logger.debug("Backend connection acquired from pool: {}", clientAddress);
-                    onSuccess.accept(outboundChannel);
-                } else {
-                    Throwable cause = future.cause();
-                    logger.error("Failed to acquire connection from pool", cause);
-                    metrics.incrementConnectionErrors(classifyConnectionError(cause));
-                    onFailure.accept(cause);
+            if (useConnectionPool) {
+                Future<Channel> acquireFuture = connectionPool.acquire(
+                        ctx.channel(), target.host, target.port, target.protocol, target.backend);
+                acquireFuture.addListener(future -> dispatchBackendConnection(
+                        ctx, (Channel) future.getNow(), target.backend, future.cause()));
+            } else {
+                backendConnector.connectToBackend(
+                        ctx.channel(), target.host, target.port, target.protocol, target.backend)
+                        .addListener((ChannelFutureListener) future -> dispatchBackendConnection(ctx,
+                                future.isSuccess() ? future.channel() : null, target.backend, future.cause()));
+            }
+        } catch (Exception cause) {
+            finishBackendConnection(ctx, null, null, cause);
+        }
+    }
+
+    private void dispatchBackendConnection(ChannelHandlerContext ctx, Channel channel, Backend backend, Throwable cause) {
+        try {
+            ctx.executor().execute(() -> finishBackendConnection(ctx, channel, backend, cause));
+        } catch (RejectedExecutionException rejected) {
+            if (channel != null) {
+                channel.close();
+                if (useConnectionPool) {
+                    connectionPool.release(channel, backend);
                 }
-            });
-        } else {
-            io.netty.channel.ChannelFuture connectFuture = backendConnector.connect(ctx.channel());
-            connectFuture.addListener((ChannelFutureListener) future -> {
-                if (future.isSuccess()) {
-                    outboundChannel = future.channel();
-                    logger.debug("Backend connection established: {}", clientAddress);
-                    onSuccess.accept(outboundChannel);
-                } else {
-                    Throwable cause = future.cause();
-                    logger.error("Failed to connect to backend server", cause);
-                    metrics.incrementConnectionErrors(classifyConnectionError(cause));
-                    onFailure.accept(cause);
-                }
-            });
+            }
+        }
+    }
+
+    private void finishBackendConnection(ChannelHandlerContext ctx, Channel channel, Backend backend, Throwable cause) {
+        connecting = false;
+        if (channel != null && !ctx.channel().isActive()) {
+            channel.close();
+            if (useConnectionPool) {
+                connectionPool.release(channel, backend);
+            }
+            channel = null;
+            cause = new ClosedChannelException();
+        }
+        if (channel == null) {
+            metrics.incrementConnectionErrors(classifyConnectionError(cause));
+            while (!connectionListeners.isEmpty()) {
+                connectionListeners.removeFirst().onFailure().accept(cause);
+            }
+            return;
+        }
+        outboundChannel = channel;
+        currentBackend = backend;
+        while (!connectionListeners.isEmpty()) {
+            connectionListeners.removeFirst().onSuccess().accept(channel);
         }
     }
 
     /**
      * 转发流式请求头到后端服务器
      */
-    private void forwardStreamingRequestToBackend(ChannelHandlerContext ctx, HttpRequest request) {
+    private void forwardStreamingRequestToBackend(ChannelHandlerContext ctx, HttpRequest request, BackendCall call) {
         if (outboundChannel != null && outboundChannel.isActive()) {
             // 修改请求头
             modifyRequestHeaders(request);
 
             outboundChannel.writeAndFlush(request).addListener((ChannelFutureListener) future -> {
-                if (future.isSuccess()) {
-                    long duration = System.currentTimeMillis() - requestStartTime;
-                    logger.debug("Streaming request header forwarded to backend: {} {} (took {}ms)",
-                            request.method(), requestUri, duration);
-                } else {
+                if (!future.isSuccess()) {
                     logger.error("Failed to forward streaming request header to backend: {}",
                             future.cause() != null ? future.cause().getMessage() : "unknown");
                     // 关闭后端连接和前端连接
-                    closeBackendChannel();
-                    ctx.close();
+                    ctx.executor().execute(() -> {
+                        if (call.completed || future.channel() != outboundChannel) {
+                            return;
+                        }
+                        completeBackendCall(call, false);
+                        failPendingCalls();
+                        closeBackendChannel(true);
+                        ctx.close();
+                    });
                 }
             });
         } else {
+            completeBackendCall(call, false);
             sendErrorResponse(ctx, "Backend connection not available");
         }
     }
@@ -344,8 +386,6 @@ public class ProxyFrontendHandler extends SimpleChannelInboundHandler<HttpObject
                 }
             });
         } else {
-            // 后端连接不可用时，必须释放 HttpContent 避免 ByteBuf 泄漏
-            io.netty.util.ReferenceCountUtil.release(msg);
             logger.warn("Backend channel not available, dropped forwarded data");
         }
     }
@@ -461,20 +501,99 @@ public class ProxyFrontendHandler extends SimpleChannelInboundHandler<HttpObject
     /**
      * 记录熔断器成功调用
      */
-    private void recordCircuitBreakerSuccess(long duration) {
+    private BackendCall beginBackendCall(ChannelHandlerContext ctx) {
+        BackendCall call = new BackendCall();
+        pendingCalls.addLast(call);
+        int timeout = config.connection != null && config.connection.timeout > 0
+                ? config.connection.timeout : 30000;
+        call.timeout = ctx.executor().schedule(() -> {
+            if (!call.completed) {
+                failPendingCalls();
+                closeBackendChannel(true);
+                sendErrorResponse(ctx, HttpResponseStatus.GATEWAY_TIMEOUT,
+                        "Gateway Timeout", "Backend response deadline exceeded");
+            }
+        }, timeout, TimeUnit.MILLISECONDS);
+        return call;
+    }
+
+    private void completeBackendCall(BackendCall call, boolean success) {
+        if (call.completed) {
+            return;
+        }
+        call.completed = true;
+        call.timeout.cancel(false);
+        pendingCalls.remove(call);
         if (circuitBreaker != null) {
-            circuitBreaker.recordSuccess(duration);
+            long duration = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - call.startedNanos);
+            if (success) {
+                circuitBreaker.recordSuccess(duration);
+            } else {
+                circuitBreaker.recordFailure(duration);
+            }
         }
     }
 
-    /**
-     * 记录熔断器失败调用
-     */
-    private void recordCircuitBreakerFailure() {
-        if (circuitBreaker != null) {
-            long duration = System.currentTimeMillis() - requestStartTime;
-            circuitBreaker.recordFailure(duration);
+    void backendResponse(ChannelHandlerContext ctx, Channel channel, int status, boolean complete, boolean failed) {
+        if (channel != outboundChannel || pendingCalls.isEmpty()) {
+            return;
         }
+        if (failed) {
+            failPendingCalls();
+            closeBackendChannel(true);
+            sendErrorResponse(ctx, "Invalid backend response");
+            return;
+        }
+        if (status > 0 && status < 200 && status != 101) {
+            return;
+        }
+        BackendCall call = pendingCalls.peekFirst();
+        if (status >= 200 || status == 101) {
+            call.status = status;
+        }
+        if (complete && call.status > 0) {
+            completeBackendCall(call, call.status < 500);
+        }
+    }
+
+    void backendFailure(ChannelHandlerContext ctx, Channel channel) {
+        if (channel == outboundChannel) {
+            boolean incomplete = !pendingCalls.isEmpty();
+            failPendingCalls();
+            closeBackendChannel(true);
+            if (incomplete) {
+                sendErrorResponse(ctx, "Backend closed before completing its response");
+            } else {
+                flushAndClose(ctx);
+            }
+        }
+    }
+
+    private void failPendingCalls() {
+        while (!pendingCalls.isEmpty()) {
+            completeBackendCall(pendingCalls.peekFirst(), false);
+        }
+    }
+
+    private void cancelPendingCalls() {
+        while (!pendingCalls.isEmpty()) {
+            BackendCall call = pendingCalls.removeFirst();
+            call.completed = true;
+            call.timeout.cancel(false);
+            if (circuitBreaker != null) {
+                circuitBreaker.releasePermission();
+            }
+        }
+    }
+
+    private static final class BackendCall {
+        private final long startedNanos = System.nanoTime();
+        private int status;
+        private boolean completed;
+        private ScheduledFuture<?> timeout;
+    }
+
+    private record BackendConnectionListener(Consumer<Channel> onSuccess, Consumer<Throwable> onFailure) {
     }
 
     /**
@@ -487,7 +606,12 @@ public class ProxyFrontendHandler extends SimpleChannelInboundHandler<HttpObject
         logger.debug("Client channel inactive: {}", clientAddress);
         // 从连接追踪器注销
         connectionTracker.unregister(ctx.channel());
-        closeBackendChannel();
+        boolean incomplete = !pendingCalls.isEmpty();
+        cancelPendingCalls();
+        closeBackendChannel(incomplete);
+        while (!connectionListeners.isEmpty()) {
+            connectionListeners.removeFirst().onFailure().accept(new ClosedChannelException());
+        }
     }
 
     /**
@@ -501,7 +625,8 @@ public class ProxyFrontendHandler extends SimpleChannelInboundHandler<HttpObject
         if (evt instanceof IdleStateEvent event) {
             if (event.state() == IdleState.ALL_IDLE) {
                 logger.info("Connection idle timeout: {}", clientAddress);
-                closeBackendChannel();
+                failPendingCalls();
+                closeBackendChannel(true);
                 flushAndClose(ctx);
             }
         }
@@ -541,7 +666,9 @@ public class ProxyFrontendHandler extends SimpleChannelInboundHandler<HttpObject
     public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {
         logger.error("Exception in proxy frontend handler for {}: {}",
                 clientAddress, cause.getMessage(), cause);
-        closeBackendChannel();
+        boolean incomplete = !pendingCalls.isEmpty();
+        cancelPendingCalls();
+        closeBackendChannel(incomplete);
         flushAndClose(ctx);
     }
 
@@ -619,8 +746,11 @@ public class ProxyFrontendHandler extends SimpleChannelInboundHandler<HttpObject
     /**
      * 关闭或释放后端连接
      */
-    private void closeBackendChannel() {
+    private void closeBackendChannel(boolean incomplete) {
         if (outboundChannel != null) {
+            if (incomplete) {
+                outboundChannel.close();
+            }
             if (useConnectionPool && connectionPool != null) {
                 // 使用连接池时，释放连接回池中
                 logger.debug("Releasing backend connection to pool");
